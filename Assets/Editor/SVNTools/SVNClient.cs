@@ -56,7 +56,7 @@ namespace UnitySVNTools.Editor
             }
         }
 
-        public static List<SVNStatusEntry> GetStatusEntries(SVNRepositoryInfo repositoryInfo, SVNIgnoreSettings ignoreSettings, out string error)
+        public static List<SVNStatusEntry> GetStatusEntries(SVNRepositoryInfo repositoryInfo, SVNToolSettings ignoreSettings, out string error)
         {
             error = string.Empty;
             var entries = new List<SVNStatusEntry>();
@@ -134,9 +134,83 @@ namespace UnitySVNTools.Editor
             }
 
             var relativePath = GetRelativePath(repositoryInfo.WorkingCopyRoot, absolutePath);
-            var result = RunCommand(repositoryInfo.WorkingCopyRoot, "revert", Quote(relativePath));
-            output = result.CombinedOutput;
-            return result.Success;
+            var result = RunCommand(repositoryInfo.WorkingCopyRoot, "revert", $"--depth infinity {Quote(relativePath)}");
+            if (!result.Success)
+            {
+                output = result.CombinedOutput;
+                return false;
+            }
+
+            var validation = RunCommand(repositoryInfo.WorkingCopyRoot, $"status {Quote(relativePath)}");
+            output = string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Reverted path." : result.CombinedOutput;
+            return validation.Success && string.IsNullOrWhiteSpace(validation.StandardOutput);
+        }
+
+        public static bool DeleteLocalPath(string absolutePath, out string output)
+        {
+            output = string.Empty;
+            if (!File.Exists(absolutePath) && !Directory.Exists(absolutePath))
+            {
+                output = "The selected path does not exist anymore.";
+                return false;
+            }
+
+            try
+            {
+                if (File.Exists(absolutePath))
+                {
+                    File.Delete(absolutePath);
+                }
+                else
+                {
+                    Directory.Delete(absolutePath, true);
+                }
+
+                var metaFilePath = absolutePath + ".meta";
+                if (File.Exists(metaFilePath))
+                {
+                    File.Delete(metaFilePath);
+                }
+
+                output = "Deleted local path.";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                output = exception.Message;
+                return false;
+            }
+        }
+
+        public static bool OpenContainingFolder(string absolutePath, out string output)
+        {
+            output = string.Empty;
+            if (string.IsNullOrWhiteSpace(absolutePath))
+            {
+                output = "The selected path is empty.";
+                return false;
+            }
+
+            try
+            {
+                var targetPath = Directory.Exists(absolutePath)
+                    ? absolutePath
+                    : Path.GetDirectoryName(absolutePath);
+                if (string.IsNullOrWhiteSpace(targetPath) || !Directory.Exists(targetPath))
+                {
+                    output = "The containing folder does not exist.";
+                    return false;
+                }
+
+                OpenPath(targetPath);
+                output = "Opened containing folder.";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                output = exception.Message;
+                return false;
+            }
         }
 
         public static bool Commit(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, string message, out string output)
@@ -250,6 +324,16 @@ namespace UnitySVNTools.Editor
                 return false;
             }
 
+            if (showDiff && IsAddedFilePreviewEntry(entry))
+            {
+                if (TryRunAddedFileDiff(entry.AbsolutePath, out output))
+                {
+                    return true;
+                }
+
+                return OpenFileContentPreview(entry, out output);
+            }
+
             if (TryRunTortoiseProc(entry.AbsolutePath, showDiff, out output))
             {
                 return true;
@@ -273,9 +357,110 @@ namespace UnitySVNTools.Editor
             return true;
         }
 
+        private static bool IsAddedFilePreviewEntry(SVNStatusEntry entry)
+        {
+            if (entry == null || string.IsNullOrWhiteSpace(entry.AbsolutePath) || !File.Exists(entry.AbsolutePath))
+            {
+                return false;
+            }
+
+            return string.Equals(entry.WorkingCopyStatus, "added", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entry.WorkingCopyStatus, "unversioned", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryRunAddedFileDiff(string absolutePath, out string output)
+        {
+            output = string.Empty;
+            if (!TryGetTortoiseProcPath(out var tortoiseProcPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var leftPath = CreateEmptyDiffBaseFile(absolutePath);
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = tortoiseProcPath,
+                    Arguments = $"/command:diff /path:{Quote(leftPath)} /path2:{Quote(absolutePath)}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+
+                Process.Start(startInfo);
+                output = "Opened added file preview in TortoiseSVN.";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                output = exception.Message;
+                return false;
+            }
+        }
+
+        private static bool OpenFileContentPreview(SVNStatusEntry entry, out string output)
+        {
+            output = string.Empty;
+            if (entry == null || string.IsNullOrWhiteSpace(entry.AbsolutePath) || !File.Exists(entry.AbsolutePath))
+            {
+                output = "The selected file does not exist.";
+                return false;
+            }
+
+            try
+            {
+                var extension = Path.GetExtension(entry.AbsolutePath);
+                if (string.IsNullOrWhiteSpace(extension))
+                {
+                    extension = ".txt";
+                }
+
+                var previewPath = Path.Combine(
+                    Path.GetTempPath(),
+                    $"unity-svn-preview-{Path.GetFileNameWithoutExtension(entry.AbsolutePath)}-{Guid.NewGuid():N}{extension}");
+                File.Copy(entry.AbsolutePath, previewPath, true);
+                OpenPath(previewPath);
+                output = $"Opened file preview for {entry.RelativePath}.";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                output = exception.Message;
+                return false;
+            }
+        }
+
         private static bool TryRunTortoiseProc(string absolutePath, bool showDiff, out string output)
         {
             output = string.Empty;
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+            {
+                return false;
+            }
+
+            if (!TryGetTortoiseProcPath(out var tortoiseProcPath))
+            {
+                return false;
+            }
+
+            var command = showDiff ? "diff" : "log";
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = tortoiseProcPath,
+                Arguments = $"/command:{command} /path:{Quote(absolutePath)}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            Process.Start(startInfo);
+            output = $"Opened {command} in TortoiseSVN.";
+            return true;
+
+        }
+
+        private static bool TryGetTortoiseProcPath(out string tortoiseProcPath)
+        {
+            tortoiseProcPath = string.Empty;
             if (Application.platform != RuntimePlatform.WindowsEditor)
             {
                 return false;
@@ -297,21 +482,26 @@ namespace UnitySVNTools.Editor
                     continue;
                 }
 
-                var command = showDiff ? "diff" : "log";
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = candidate,
-                    Arguments = $"/command:{command} /path:{Quote(absolutePath)}",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-
-                Process.Start(startInfo);
-                output = $"Opened {command} in TortoiseSVN.";
+                tortoiseProcPath = candidate;
                 return true;
             }
 
             return false;
+        }
+
+        private static string CreateEmptyDiffBaseFile(string absolutePath)
+        {
+            var extension = Path.GetExtension(absolutePath);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = ".txt";
+            }
+
+            var tempFilePath = Path.Combine(
+                Path.GetTempPath(),
+                $"unity-svn-empty-{Path.GetFileNameWithoutExtension(absolutePath)}-{Guid.NewGuid():N}{extension}");
+            File.WriteAllText(tempFilePath, string.Empty, Encoding.UTF8);
+            return tempFilePath;
         }
 
         private static void OpenPath(string path)
