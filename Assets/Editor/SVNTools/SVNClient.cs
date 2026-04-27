@@ -382,7 +382,7 @@ namespace UnitySVNTools.Editor
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = tortoiseProcPath,
-                    Arguments = $"/command:diff /path:{Quote(leftPath)} /path2:{Quote(absolutePath)}",
+                    Arguments = $"/command:diff /path:{Quote(absolutePath)} /path2:{Quote(leftPath)}",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 };
