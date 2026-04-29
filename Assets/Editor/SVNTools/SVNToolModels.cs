@@ -39,6 +39,28 @@ namespace UnitySVNTools.Editor
         public bool IsVersioned;
     }
 
+    internal enum SVNCommitFailureKind
+    {
+        None,
+        NoFilesSelected,
+        MessageRequired,
+        NeedsUpdate,
+        CleanupRequired,
+        ConflictDetected,
+        AuthenticationRequired,
+        NetworkError,
+        NotWorkingCopy,
+        HookRejected,
+        Unknown,
+    }
+
+    internal sealed class SVNCommitResult
+    {
+        public bool Success;
+        public string Output = string.Empty;
+        public SVNCommitFailureKind FailureKind;
+    }
+
     internal sealed class SVNCommandResult
     {
         public bool Success;

@@ -218,19 +218,16 @@ namespace UnitySVNTools.Editor
             }
         }
 
-        public static bool Commit(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, string message, out string output)
+        public static SVNCommitResult Commit(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, string message)
         {
-            output = string.Empty;
             if (entries == null || entries.Count == 0)
             {
-                output = "There are no files to commit.";
-                return false;
+                return CreateCommitFailureResult("There are no files to commit.", SVNCommitFailureKind.NoFilesSelected);
             }
 
             if (string.IsNullOrWhiteSpace(message))
             {
-                output = "Commit message is required.";
-                return false;
+                return CreateCommitFailureResult("Commit message is required.", SVNCommitFailureKind.MessageRequired);
             }
 
             var paths = new List<string>();
@@ -247,8 +244,7 @@ namespace UnitySVNTools.Editor
                     var addResult = RunCommand(repositoryInfo.WorkingCopyRoot, "add", Quote(relativePath));
                     if (!addResult.Success)
                     {
-                        output = addResult.CombinedOutput;
-                        return false;
+                        return CreateCommitFailureResult(addResult.CombinedOutput, ClassifyCommitFailure(addResult.CombinedOutput));
                     }
                 }
                 else if (entry.WorkingCopyStatus == "missing")
@@ -256,8 +252,7 @@ namespace UnitySVNTools.Editor
                     var deleteResult = RunCommand(repositoryInfo.WorkingCopyRoot, "delete", Quote(relativePath));
                     if (!deleteResult.Success)
                     {
-                        output = deleteResult.CombinedOutput;
-                        return false;
+                        return CreateCommitFailureResult(deleteResult.CombinedOutput, ClassifyCommitFailure(deleteResult.CombinedOutput));
                     }
                 }
 
@@ -274,8 +269,17 @@ namespace UnitySVNTools.Editor
             }
 
             var commitResult = RunCommand(repositoryInfo.WorkingCopyRoot, commitArguments.ToString());
-            output = commitResult.CombinedOutput;
-            return commitResult.Success;
+            if (commitResult.Success)
+            {
+                return new SVNCommitResult
+                {
+                    Success = true,
+                    Output = commitResult.CombinedOutput,
+                    FailureKind = SVNCommitFailureKind.None,
+                };
+            }
+
+            return CreateCommitFailureResult(commitResult.CombinedOutput, ClassifyCommitFailure(commitResult.CombinedOutput));
         }
 
         public static bool OpenCommitWindow(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, out string output)
@@ -311,6 +315,17 @@ namespace UnitySVNTools.Editor
             }
 
             return TryRunTortoiseProcCommand("commit", paths, out output);
+        }
+
+        public static bool OpenCleanupWindow(SVNRepositoryInfo repositoryInfo, out string output)
+        {
+            if (repositoryInfo == null)
+            {
+                output = "SVN repository information is unavailable.";
+                return false;
+            }
+
+            return TryRunTortoiseProcCommand("cleanup", new[] { repositoryInfo.WorkingCopyRoot }, out output);
         }
 
         public static bool ShowDiff(SVNRepositoryInfo repositoryInfo, SVNStatusEntry entry, out string output)
@@ -531,6 +546,75 @@ namespace UnitySVNTools.Editor
             Process.Start(startInfo);
             output = $"Opened {command} in TortoiseSVN.";
             return true;
+        }
+
+        private static SVNCommitResult CreateCommitFailureResult(string output, SVNCommitFailureKind failureKind)
+        {
+            return new SVNCommitResult
+            {
+                Success = false,
+                Output = output ?? string.Empty,
+                FailureKind = failureKind,
+            };
+        }
+
+        private static SVNCommitFailureKind ClassifyCommitFailure(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                return SVNCommitFailureKind.Unknown;
+            }
+
+            var normalized = output.Replace('\r', '\n').ToLowerInvariant();
+            if (ContainsAny(normalized, "e155011", "out of date", "out-of-date", "please update", "resource out of date"))
+            {
+                return SVNCommitFailureKind.NeedsUpdate;
+            }
+
+            if (ContainsAny(normalized, "e155004", "e155037", "working copy locked", "run 'svn cleanup'", "run \"svn cleanup\"", "cleanup is required"))
+            {
+                return SVNCommitFailureKind.CleanupRequired;
+            }
+
+            if (ContainsAny(normalized, "e155015", "remains in conflict", "is conflicted", "conflict discovered", "conflicts were produced"))
+            {
+                return SVNCommitFailureKind.ConflictDetected;
+            }
+
+            if (ContainsAny(normalized, "e170001", "e215004", "authorization failed", "authentication failed", "could not authenticate", "authentication error"))
+            {
+                return SVNCommitFailureKind.AuthenticationRequired;
+            }
+
+            if (ContainsAny(normalized, "e170013", "e730061", "unable to connect", "could not connect", "connection timed out", "timed out", "connection refused", "host not found", "name or service not known"))
+            {
+                return SVNCommitFailureKind.NetworkError;
+            }
+
+            if (ContainsAny(normalized, "e155007", "is not a working copy", "not a working copy"))
+            {
+                return SVNCommitFailureKind.NotWorkingCopy;
+            }
+
+            if (ContainsAny(normalized, "pre-commit hook failed", "post-commit hook failed", "hook failed"))
+            {
+                return SVNCommitFailureKind.HookRejected;
+            }
+
+            return SVNCommitFailureKind.Unknown;
+        }
+
+        private static bool ContainsAny(string value, params string[] candidates)
+        {
+            for (var index = 0; index < candidates.Length; index++)
+            {
+                if (value.IndexOf(candidates[index], StringComparison.Ordinal) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryGetTortoiseProcPath(out string tortoiseProcPath)

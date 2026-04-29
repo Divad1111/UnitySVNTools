@@ -636,42 +636,174 @@ namespace UnitySVNTools.Editor
                 () =>
                 {
                     SetOperationStep("执行 svn commit");
-                    var success = SVNClient.Commit(repositoryInfo, entriesToCommit, commitMessage, out var output);
-                    return new OperationPayload(success, output, success);
+                    return SVNClient.Commit(repositoryInfo, entriesToCommit, commitMessage);
                 },
-                payload =>
+                commitResult =>
                 {
-                    if (payload.ShouldRefreshAssets)
+                    if (commitResult.Success)
                     {
                         SetOperationStep("刷新 Unity 资源");
                         AssetDatabase.Refresh();
-                    }
-
-                    lastStatusMessage = payload.Success ? "提交完成" : payload.Output;
-                    if (!payload.Success)
-                    {
-                        if (SVNClient.OpenCommitWindow(repositoryInfo, entriesToCommit, out var fallbackOutput))
-                        {
-                            lastStatusMessage = "svn commit 失败，已打开 TortoiseSVN 提交窗口。";
-                        }
-                        else
-                        {
-                            var message = string.IsNullOrWhiteSpace(fallbackOutput)
-                                ? payload.Output
-                                : $"{payload.Output}\n\n{fallbackOutput}";
-                            EditorUtility.DisplayDialog("SVN 提交失败", message, "确定");
-                        }
-
+                        lastStatusMessage = "提交完成";
+                        SVNToolSettings.instance.AddCommitMessageHistory(commitMessage);
+                        commitMessage = string.Empty;
+                        selectedPaths.Clear();
+                        selectedRows.Clear();
+                        RequestRefreshAfterCurrentOperation();
                         return;
                     }
 
-                    SVNToolSettings.instance.AddCommitMessageHistory(commitMessage);
-                    commitMessage = string.Empty;
-                    selectedPaths.Clear();
-                    selectedRows.Clear();
-                    RequestRefreshAfterCurrentOperation();
+                    HandleCommitFailure(entriesToCommit, commitResult);
                 },
                 "SVN 提交失败");
+        }
+
+        private void HandleCommitFailure(IReadOnlyList<SVNStatusEntry> entriesToCommit, SVNCommitResult commitResult)
+        {
+            var output = string.IsNullOrWhiteSpace(commitResult?.Output) ? "提交失败。" : commitResult.Output;
+            lastStatusMessage = output;
+
+            switch (commitResult?.FailureKind ?? SVNCommitFailureKind.Unknown)
+            {
+                case SVNCommitFailureKind.NeedsUpdate:
+                    HandleUpdateRequiredCommitFailure(output);
+                    return;
+                case SVNCommitFailureKind.CleanupRequired:
+                    HandleCleanupRequiredCommitFailure(output);
+                    return;
+                case SVNCommitFailureKind.ConflictDetected:
+                    HandleConflictCommitFailure(entriesToCommit, output);
+                    return;
+                case SVNCommitFailureKind.AuthenticationRequired:
+                    HandleCommitWindowFailure(entriesToCommit, "SVN 认证失败", "提交时认证失败，是否打开 TortoiseSVN 提交窗口继续处理？", output);
+                    return;
+                case SVNCommitFailureKind.NetworkError:
+                    HandleCommitWindowFailure(entriesToCommit, "SVN 连接失败", "提交时无法连接到 SVN 服务，是否打开 TortoiseSVN 提交窗口继续处理？", output);
+                    return;
+                case SVNCommitFailureKind.NotWorkingCopy:
+                    EditorUtility.DisplayDialog("SVN 工作副本无效", output, "确定");
+                    return;
+                case SVNCommitFailureKind.HookRejected:
+                    EditorUtility.DisplayDialog("SVN 钩子拒绝提交", output, "确定");
+                    return;
+                case SVNCommitFailureKind.MessageRequired:
+                    EditorUtility.DisplayDialog("缺少提交说明", "请输入提交说明后再提交。", "确定");
+                    return;
+                case SVNCommitFailureKind.NoFilesSelected:
+                    EditorUtility.DisplayDialog("没有可提交的文件", "当前没有可提交的文件。", "确定");
+                    return;
+                default:
+                    HandleCommitWindowFailure(entriesToCommit, "SVN 提交失败", "提交失败，是否打开 TortoiseSVN 提交窗口继续处理？", output);
+                    return;
+            }
+        }
+
+        private void HandleUpdateRequiredCommitFailure(string output)
+        {
+            var choice = EditorUtility.DisplayDialogComplex(
+                "提交前需要更新",
+                $"当前提交被 SVN 拒绝，工作副本需要先更新。\n\n{output}",
+                "打开更新窗口",
+                "取消",
+                "查看原始错误");
+
+            if (choice == 0)
+            {
+                if (SVNClient.OpenUpdateWindow(repositoryInfo, out var updateOutput))
+                {
+                    lastStatusMessage = "提交被拒绝，已打开 TortoiseSVN 更新窗口。更新完成后请刷新并重新提交。";
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog("无法打开更新窗口", updateOutput, "确定");
+                }
+
+                return;
+            }
+
+            if (choice == 2)
+            {
+                EditorUtility.DisplayDialog("SVN 提交失败", output, "确定");
+            }
+        }
+
+        private void HandleCleanupRequiredCommitFailure(string output)
+        {
+            var choice = EditorUtility.DisplayDialogComplex(
+                "提交前需要清理",
+                $"当前工作副本处于锁定或异常状态，需要先执行 cleanup。\n\n{output}",
+                "打开清理窗口",
+                "取消",
+                "查看原始错误");
+
+            if (choice == 0)
+            {
+                if (SVNClient.OpenCleanupWindow(repositoryInfo, out var cleanupOutput))
+                {
+                    lastStatusMessage = "提交被拒绝，已打开 TortoiseSVN 清理窗口。清理完成后请刷新并重新提交。";
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog("无法打开清理窗口", cleanupOutput, "确定");
+                }
+
+                return;
+            }
+
+            if (choice == 2)
+            {
+                EditorUtility.DisplayDialog("SVN 提交失败", output, "确定");
+            }
+        }
+
+        private void HandleConflictCommitFailure(IReadOnlyList<SVNStatusEntry> entriesToCommit, string output)
+        {
+            var choice = EditorUtility.DisplayDialogComplex(
+                "提交包含冲突",
+                $"当前工作副本还存在冲突，提交已被拒绝。\n\n{output}",
+                "刷新改动列表",
+                "取消",
+                "打开提交窗口");
+
+            if (choice == 0)
+            {
+                RequestRefreshAfterCurrentOperation();
+                return;
+            }
+
+            if (choice == 2)
+            {
+                OpenCommitWindowOrShowError(entriesToCommit, output);
+            }
+        }
+
+        private void HandleCommitWindowFailure(IReadOnlyList<SVNStatusEntry> entriesToCommit, string title, string prompt, string output)
+        {
+            var choice = EditorUtility.DisplayDialogComplex(title, $"{prompt}\n\n{output}", "打开提交窗口", "取消", "查看原始错误");
+            if (choice == 0)
+            {
+                OpenCommitWindowOrShowError(entriesToCommit, output);
+                return;
+            }
+
+            if (choice == 2)
+            {
+                EditorUtility.DisplayDialog(title, output, "确定");
+            }
+        }
+
+        private void OpenCommitWindowOrShowError(IReadOnlyList<SVNStatusEntry> entriesToCommit, string originalOutput)
+        {
+            if (SVNClient.OpenCommitWindow(repositoryInfo, entriesToCommit as IList<SVNStatusEntry> ?? new List<SVNStatusEntry>(entriesToCommit), out var fallbackOutput))
+            {
+                lastStatusMessage = "命令行提交失败，已打开 TortoiseSVN 提交窗口。";
+                return;
+            }
+
+            var message = string.IsNullOrWhiteSpace(fallbackOutput)
+                ? originalOutput
+                : $"{originalOutput}\n\n{fallbackOutput}";
+            EditorUtility.DisplayDialog("SVN 提交失败", message, "确定");
         }
 
         private List<SVNStatusEntry> GetEntriesToCommit()
@@ -1066,7 +1198,19 @@ namespace UnitySVNTools.Editor
         private void HandleKeyboardShortcuts()
         {
             var currentEvent = Event.current;
-            if (currentEvent.type != EventType.KeyDown || !changesListHasFocus || GUI.GetNameOfFocusedControl() == CommitMessageControlName)
+            if (currentEvent.type != EventType.KeyDown)
+            {
+                return;
+            }
+
+            if (currentEvent.keyCode == KeyCode.F5)
+            {
+                RefreshStatusAsync(true);
+                currentEvent.Use();
+                return;
+            }
+
+            if (!changesListHasFocus || GUI.GetNameOfFocusedControl() == CommitMessageControlName)
             {
                 return;
             }
