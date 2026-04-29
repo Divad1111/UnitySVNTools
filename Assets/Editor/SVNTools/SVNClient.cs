@@ -119,6 +119,11 @@ namespace UnitySVNTools.Editor
             return result.Success;
         }
 
+        public static bool OpenUpdateWindow(SVNRepositoryInfo repositoryInfo, out string output)
+        {
+            return TryRunTortoiseProcCommand("update", new[] { repositoryInfo.WorkingCopyRoot }, out output);
+        }
+
         public static bool RevertPath(SVNRepositoryInfo repositoryInfo, string absolutePath, out string output)
         {
             if (!File.Exists(absolutePath) && !Directory.Exists(absolutePath))
@@ -271,6 +276,41 @@ namespace UnitySVNTools.Editor
             var commitResult = RunCommand(repositoryInfo.WorkingCopyRoot, commitArguments.ToString());
             output = commitResult.CombinedOutput;
             return commitResult.Success;
+        }
+
+        public static bool OpenCommitWindow(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, out string output)
+        {
+            output = string.Empty;
+            if (repositoryInfo == null)
+            {
+                output = "SVN repository information is unavailable.";
+                return false;
+            }
+
+            var paths = new List<string>();
+            if (entries != null)
+            {
+                for (var index = 0; index < entries.Count; index++)
+                {
+                    var entry = entries[index];
+                    if (entry == null || string.IsNullOrWhiteSpace(entry.AbsolutePath))
+                    {
+                        continue;
+                    }
+
+                    if (!paths.Contains(entry.AbsolutePath))
+                    {
+                        paths.Add(entry.AbsolutePath);
+                    }
+                }
+            }
+
+            if (paths.Count == 0)
+            {
+                paths.Add(repositoryInfo.WorkingCopyRoot);
+            }
+
+            return TryRunTortoiseProcCommand("commit", paths, out output);
         }
 
         public static bool ShowDiff(SVNRepositoryInfo repositoryInfo, SVNStatusEntry entry, out string output)
@@ -456,6 +496,41 @@ namespace UnitySVNTools.Editor
             output = $"Opened {command} in TortoiseSVN.";
             return true;
 
+        }
+
+        private static bool TryRunTortoiseProcCommand(string command, IList<string> absolutePaths, out string output)
+        {
+            output = string.Empty;
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+            {
+                output = "TortoiseSVN is only available on Windows.";
+                return false;
+            }
+
+            if (!TryGetTortoiseProcPath(out var tortoiseProcPath))
+            {
+                output = "Unable to locate TortoiseProc.exe.";
+                return false;
+            }
+
+            if (absolutePaths == null || absolutePaths.Count == 0)
+            {
+                output = "No valid target path was provided.";
+                return false;
+            }
+
+            var joinedPaths = string.Join("*", absolutePaths);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = tortoiseProcPath,
+                Arguments = $"/command:{command} /path:{Quote(joinedPaths)} /closeonend:0",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            Process.Start(startInfo);
+            output = $"Opened {command} in TortoiseSVN.";
+            return true;
         }
 
         private static bool TryGetTortoiseProcPath(out string tortoiseProcPath)

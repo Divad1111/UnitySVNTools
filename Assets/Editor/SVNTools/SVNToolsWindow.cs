@@ -44,11 +44,13 @@ namespace UnitySVNTools.Editor
         private string lastStatusMessage = "Ready";
         private string currentOperationLabel = string.Empty;
         private volatile string currentOperationStep = string.Empty;
+        private string pendingCommitMessageSelection;
         private DateTime lastRefreshTime = DateTime.MinValue;
         private bool repositoryAvailable;
         private bool isBusy;
         private bool layoutInitialized;
         private bool changesListHasFocus;
+        private bool refreshRequestedAfterOperation;
         private bool showIgnoredEntries;
         private bool showUnversionedEntries;
         private SortColumn sortColumn;
@@ -106,6 +108,8 @@ namespace UnitySVNTools.Editor
             {
                 return;
             }
+
+            ApplyPendingCommitMessageSelection();
 
             if (!layoutInitialized)
             {
@@ -602,31 +606,15 @@ namespace UnitySVNTools.Editor
                 return;
             }
 
-            StartBackgroundAction(
-                "正在更新工作副本...",
-                () =>
-                {
-                    SetOperationStep("执行 svn update");
-                    var success = SVNClient.UpdateWorkingCopy(repositoryInfo, out var output);
-                    return new OperationPayload(success, output, success);
-                },
-                payload =>
-                {
-                    if (payload.ShouldRefreshAssets)
-                    {
-                        SetOperationStep("刷新 Unity 资源");
-                        AssetDatabase.Refresh();
-                    }
+            if (!SVNClient.OpenUpdateWindow(repositoryInfo, out var output))
+            {
+                lastStatusMessage = output;
+                EditorUtility.DisplayDialog("无法打开 TortoiseSVN 更新窗口", output, "确定");
+                return;
+            }
 
-                    lastStatusMessage = payload.Success ? "更新完成" : payload.Output;
-                    if (!payload.Success && !string.IsNullOrWhiteSpace(payload.Output))
-                    {
-                        EditorUtility.DisplayDialog("SVN 更新失败", payload.Output, "确定");
-                    }
-
-                    EditorApplication.delayCall += TriggerDeferredRefresh;
-                },
-                "SVN 更新失败");
+            lastStatusMessage = output;
+            Repaint();
         }
 
         private void CommitChanges()
@@ -662,7 +650,18 @@ namespace UnitySVNTools.Editor
                     lastStatusMessage = payload.Success ? "提交完成" : payload.Output;
                     if (!payload.Success)
                     {
-                        EditorUtility.DisplayDialog("SVN 提交失败", payload.Output, "确定");
+                        if (SVNClient.OpenCommitWindow(repositoryInfo, entriesToCommit, out var fallbackOutput))
+                        {
+                            lastStatusMessage = "svn commit 失败，已打开 TortoiseSVN 提交窗口。";
+                        }
+                        else
+                        {
+                            var message = string.IsNullOrWhiteSpace(fallbackOutput)
+                                ? payload.Output
+                                : $"{payload.Output}\n\n{fallbackOutput}";
+                            EditorUtility.DisplayDialog("SVN 提交失败", message, "确定");
+                        }
+
                         return;
                     }
 
@@ -670,7 +669,7 @@ namespace UnitySVNTools.Editor
                     commitMessage = string.Empty;
                     selectedPaths.Clear();
                     selectedRows.Clear();
-                    EditorApplication.delayCall += TriggerDeferredRefresh;
+                    RequestRefreshAfterCurrentOperation();
                 },
                 "SVN 提交失败");
         }
@@ -909,6 +908,7 @@ namespace UnitySVNTools.Editor
         private void StartBackgroundAction<T>(string busyLabel, Func<T> work, Action<T> onSuccess, string dialogTitle)
         {
             isBusy = true;
+            refreshRequestedAfterOperation = false;
             currentOperationLabel = busyLabel;
             currentOperationStep = "准备中";
             lastStatusMessage = busyLabel;
@@ -927,6 +927,14 @@ namespace UnitySVNTools.Editor
                     isBusy = false;
                     currentOperationLabel = string.Empty;
                     currentOperationStep = string.Empty;
+
+                    if (refreshRequestedAfterOperation)
+                    {
+                        refreshRequestedAfterOperation = false;
+                        RefreshStatusAsync(false);
+                        return;
+                    }
+
                     Repaint();
                 });
         }
@@ -1295,6 +1303,26 @@ namespace UnitySVNTools.Editor
             Repaint();
         }
 
+
+        private void ApplyPendingCommitMessageSelection()
+        {
+            if (pendingCommitMessageSelection == null)
+            {
+                return;
+            }
+
+            commitMessage = pendingCommitMessageSelection;
+            pendingCommitMessageSelection = null;
+            GUI.FocusControl(string.Empty);
+            GUIUtility.keyboardControl = 0;
+            changesListHasFocus = false;
+            GUI.changed = true;
+        }
+
+        private void RequestRefreshAfterCurrentOperation()
+        {
+            refreshRequestedAfterOperation = true;
+        }
         private void SetChecked(string absolutePath, bool isChecked)
         {
             if (isChecked)
@@ -1323,7 +1351,7 @@ namespace UnitySVNTools.Editor
                 var capturedMessage = message;
                 menu.AddItem(new GUIContent(displayText), false, () =>
                 {
-                    commitMessage = capturedMessage;
+                    pendingCommitMessageSelection = capturedMessage;
                     Repaint();
                 });
             }
