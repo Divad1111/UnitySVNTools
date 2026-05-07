@@ -51,6 +51,7 @@ namespace UnitySVNTools.Editor
         private bool layoutInitialized;
         private bool changesListHasFocus;
         private bool refreshRequestedAfterOperation;
+        private bool refreshRequestedAfterExternalAction;
         private bool showIgnoredEntries;
         private bool showUnversionedEntries;
         private SortColumn sortColumn;
@@ -91,6 +92,17 @@ namespace UnitySVNTools.Editor
         private void OnEnable()
         {
             LoadSettings();
+            RefreshStatusAsync(false);
+        }
+
+        private void OnFocus()
+        {
+            if (!refreshRequestedAfterExternalAction || isBusy)
+            {
+                return;
+            }
+
+            refreshRequestedAfterExternalAction = false;
             RefreshStatusAsync(false);
         }
 
@@ -613,7 +625,7 @@ namespace UnitySVNTools.Editor
                 return;
             }
 
-            lastStatusMessage = output;
+            MarkRefreshAfterExternalAction("已打开 TortoiseSVN 更新窗口，完成后返回 Unity 将自动刷新。");
             Repaint();
         }
 
@@ -711,7 +723,7 @@ namespace UnitySVNTools.Editor
             {
                 if (SVNClient.OpenUpdateWindow(repositoryInfo, out var updateOutput))
                 {
-                    lastStatusMessage = "提交被拒绝，已打开 TortoiseSVN 更新窗口。更新完成后请刷新并重新提交。";
+                    MarkRefreshAfterExternalAction("提交被拒绝，已打开 TortoiseSVN 更新窗口。更新完成后返回 Unity 将自动刷新。");
                 }
                 else
                 {
@@ -740,7 +752,7 @@ namespace UnitySVNTools.Editor
             {
                 if (SVNClient.OpenCleanupWindow(repositoryInfo, out var cleanupOutput))
                 {
-                    lastStatusMessage = "提交被拒绝，已打开 TortoiseSVN 清理窗口。清理完成后请刷新并重新提交。";
+                    MarkRefreshAfterExternalAction("提交被拒绝，已打开 TortoiseSVN 清理窗口。清理完成后返回 Unity 将自动刷新。");
                 }
                 else
                 {
@@ -796,7 +808,7 @@ namespace UnitySVNTools.Editor
         {
             if (SVNClient.OpenCommitWindow(repositoryInfo, entriesToCommit as IList<SVNStatusEntry> ?? new List<SVNStatusEntry>(entriesToCommit), out var fallbackOutput))
             {
-                lastStatusMessage = "命令行提交失败，已打开 TortoiseSVN 提交窗口。";
+                MarkRefreshAfterExternalAction("命令行提交失败，已打开 TortoiseSVN 提交窗口。完成后返回 Unity 将自动刷新。");
                 return;
             }
 
@@ -1467,6 +1479,13 @@ namespace UnitySVNTools.Editor
         {
             refreshRequestedAfterOperation = true;
         }
+
+        private void MarkRefreshAfterExternalAction(string statusMessage)
+        {
+            refreshRequestedAfterExternalAction = true;
+            lastStatusMessage = statusMessage;
+        }
+
         private void SetChecked(string absolutePath, bool isChecked)
         {
             if (isChecked)

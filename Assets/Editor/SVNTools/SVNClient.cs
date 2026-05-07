@@ -225,7 +225,8 @@ namespace UnitySVNTools.Editor
                 return CreateCommitFailureResult("There are no files to commit.", SVNCommitFailureKind.NoFilesSelected);
             }
 
-            if (string.IsNullOrWhiteSpace(message))
+            var normalizedMessage = NormalizeCommitMessage(message);
+            if (string.IsNullOrWhiteSpace(normalizedMessage))
             {
                 return CreateCommitFailureResult("Commit message is required.", SVNCommitFailureKind.MessageRequired);
             }
@@ -259,27 +260,41 @@ namespace UnitySVNTools.Editor
                 paths.Add(Quote(relativePath));
             }
 
-            var commitArguments = new StringBuilder();
-            commitArguments.Append("commit -m ");
-            commitArguments.Append(Quote(message));
-            for (var index = 0; index < paths.Count; index++)
+            string tempMessageFilePath = null;
+            try
             {
-                commitArguments.Append(' ');
-                commitArguments.Append(paths[index]);
-            }
+                tempMessageFilePath = Path.Combine(Path.GetTempPath(), $"unity-svn-commit-{Guid.NewGuid():N}.txt");
+                File.WriteAllText(tempMessageFilePath, normalizedMessage, new UTF8Encoding(false));
 
-            var commitResult = RunCommand(repositoryInfo.WorkingCopyRoot, commitArguments.ToString());
-            if (commitResult.Success)
-            {
-                return new SVNCommitResult
+                var commitArguments = new StringBuilder();
+                commitArguments.Append("commit --encoding utf-8 -F ");
+                commitArguments.Append(Quote(tempMessageFilePath));
+                for (var index = 0; index < paths.Count; index++)
                 {
-                    Success = true,
-                    Output = commitResult.CombinedOutput,
-                    FailureKind = SVNCommitFailureKind.None,
-                };
-            }
+                    commitArguments.Append(' ');
+                    commitArguments.Append(paths[index]);
+                }
 
-            return CreateCommitFailureResult(commitResult.CombinedOutput, ClassifyCommitFailure(commitResult.CombinedOutput));
+                var commitResult = RunCommand(repositoryInfo.WorkingCopyRoot, commitArguments.ToString());
+                if (commitResult.Success)
+                {
+                    return new SVNCommitResult
+                    {
+                        Success = true,
+                        Output = commitResult.CombinedOutput,
+                        FailureKind = SVNCommitFailureKind.None,
+                    };
+                }
+
+                return CreateCommitFailureResult(commitResult.CombinedOutput, ClassifyCommitFailure(commitResult.CombinedOutput));
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(tempMessageFilePath) && File.Exists(tempMessageFilePath))
+                {
+                    File.Delete(tempMessageFilePath);
+                }
+            }
         }
 
         public static bool OpenCommitWindow(SVNRepositoryInfo repositoryInfo, IList<SVNStatusEntry> entries, out string output)
@@ -781,6 +796,14 @@ namespace UnitySVNTools.Editor
         private static string EnsureTrailingSeparator(string path)
         {
             return path.EndsWith("/", StringComparison.Ordinal) ? path : path + "/";
+        }
+
+        private static string NormalizeCommitMessage(string message)
+        {
+            return (message ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Trim();
         }
 
         private static string Quote(string value)

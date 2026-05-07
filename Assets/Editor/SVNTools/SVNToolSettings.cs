@@ -242,7 +242,10 @@ namespace UnitySVNTools.Editor
 
         private static string NormalizeMessage(string message)
         {
-            return (message ?? string.Empty).Replace("\r\n", "\n").Trim();
+            return (message ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Trim();
         }
     }
 }

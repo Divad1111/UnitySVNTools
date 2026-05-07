@@ -79,10 +79,28 @@
 
 1. 在提交时要处理各种异常，比如：提交的时候发现需要跟新需要提示是否更新等，你还需要思考是否有其他异常
 
-
 ## 问题11
 
+1. 提交报错一次后，通过toriseSVN提交后，下次新的修改新的提交也会报错,
+svn: E135000: Commit failed (details follow):
+svn: E135000: Error normalizing log message to internal format
+svn: E135000: Inconsistent line ending style
+
+## 问题12
+
+1. CHANGES列表需要支持方向键移动当前选中的
+
+
+
+
+## 问题12
+
 1. 支持F5执行刷新
+
+
+## 问题13
+
+1. 为什么能正常提交成功还是会提示我打开toriseSVN的窗口
 
 
 所有代码都在SVNTools目录下，不要去扫描其他目录，太多了
