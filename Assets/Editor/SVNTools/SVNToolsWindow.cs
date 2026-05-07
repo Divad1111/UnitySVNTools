@@ -39,6 +39,7 @@ namespace UnitySVNTools.Editor
 
         private SVNRepositoryInfo repositoryInfo;
         private Vector2 changeListScroll;
+        private float changeListViewportHeight;
         private string commitMessage = string.Empty;
         private string focusedPath = string.Empty;
         private string lastStatusMessage = "Ready";
@@ -374,6 +375,7 @@ namespace UnitySVNTools.Editor
             HandleColumnResize(columns, headerRect);
 
             var bodyRect = new Rect(rect.x, headerRect.yMax, rect.width, rect.height - headerRect.height);
+            changeListViewportHeight = bodyRect.height;
             var contentHeight = Mathf.Max(bodyRect.height, visibleEntries.Count * RowHeight);
             var viewRect = new Rect(0f, 0f, rect.width - 16f, contentHeight);
             changeListScroll = GUI.BeginScrollView(bodyRect, changeListScroll, viewRect);
@@ -1241,6 +1243,20 @@ namespace UnitySVNTools.Editor
                 return;
             }
 
+            if (currentEvent.keyCode == KeyCode.UpArrow)
+            {
+                MoveRowSelection(-1, currentEvent.shift);
+                currentEvent.Use();
+                return;
+            }
+
+            if (currentEvent.keyCode == KeyCode.DownArrow)
+            {
+                MoveRowSelection(1, currentEvent.shift);
+                currentEvent.Use();
+                return;
+            }
+
             if (currentEvent.keyCode == KeyCode.Delete
                 || (Application.platform == RuntimePlatform.OSXEditor && currentEvent.command && currentEvent.keyCode == KeyCode.Backspace))
             {
@@ -1457,6 +1473,76 @@ namespace UnitySVNTools.Editor
             }
 
             Repaint();
+        }
+
+        private void MoveRowSelection(int direction, bool extendSelection)
+        {
+            var visibleEntries = GetVisibleEntries();
+            if (visibleEntries.Count == 0)
+            {
+                return;
+            }
+
+            var currentIndex = GetFocusedVisibleIndex(visibleEntries);
+            var targetIndex = currentIndex >= 0
+                ? Mathf.Clamp(currentIndex + direction, 0, visibleEntries.Count - 1)
+                : direction < 0 ? visibleEntries.Count - 1 : 0;
+
+            var targetEntry = visibleEntries[targetIndex];
+            ApplyRowSelection(targetEntry, targetIndex, false, extendSelection);
+            EnsureRowVisible(targetIndex);
+            Repaint();
+        }
+
+        private int GetFocusedVisibleIndex(List<SVNStatusEntry> visibleEntries)
+        {
+            if (!string.IsNullOrEmpty(focusedPath))
+            {
+                for (var index = 0; index < visibleEntries.Count; index++)
+                {
+                    if (visibleEntries[index].AbsolutePath == focusedPath)
+                    {
+                        return index;
+                    }
+                }
+            }
+
+            if (selectionAnchorIndex >= 0 && selectionAnchorIndex < visibleEntries.Count)
+            {
+                return selectionAnchorIndex;
+            }
+
+            for (var index = 0; index < visibleEntries.Count; index++)
+            {
+                if (selectedRows.Contains(visibleEntries[index].AbsolutePath))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private void EnsureRowVisible(int index)
+        {
+            if (index < 0 || changeListViewportHeight <= 0f)
+            {
+                return;
+            }
+
+            var rowTop = index * RowHeight;
+            var rowBottom = rowTop + RowHeight;
+            if (rowTop < changeListScroll.y)
+            {
+                changeListScroll.y = rowTop;
+                return;
+            }
+
+            var viewportBottom = changeListScroll.y + changeListViewportHeight;
+            if (rowBottom > viewportBottom)
+            {
+                changeListScroll.y = rowBottom - changeListViewportHeight;
+            }
         }
 
 
