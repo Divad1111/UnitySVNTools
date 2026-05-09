@@ -95,7 +95,8 @@ namespace UnitySVNTools.Editor
 
                         var wcStatus = entry.Element("wc-status");
                         var item = wcStatus?.Attribute("item")?.Value ?? string.Empty;
-                        var parsed = CreateStatusEntry(absolutePath, relativePath, item);
+                        var hasTreeConflict = string.Equals(wcStatus?.Attribute("tree-conflicted")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+                        var parsed = CreateStatusEntry(absolutePath, relativePath, item, hasTreeConflict);
                         if (parsed != null)
                         {
                             entries.Add(parsed);
@@ -353,27 +354,32 @@ namespace UnitySVNTools.Editor
             return ExecuteExternalOrFallback(repositoryInfo, entry, false, out output);
         }
 
-        private static SVNStatusEntry CreateStatusEntry(string absolutePath, string relativePath, string item)
+        private static SVNStatusEntry CreateStatusEntry(string absolutePath, string relativePath, string item, bool hasTreeConflict)
         {
+            if (hasTreeConflict)
+            {
+                return CreateEntry(absolutePath, relativePath, item, "C", item != "unversioned", true);
+            }
+
             switch (item)
             {
                 case "added":
-                    return CreateEntry(absolutePath, relativePath, item, "A", true);
+                    return CreateEntry(absolutePath, relativePath, item, "A", true, false);
                 case "modified":
                 case "replaced":
                 case "conflicted":
-                    return CreateEntry(absolutePath, relativePath, item, "U", true);
+                    return CreateEntry(absolutePath, relativePath, item, item == "conflicted" ? "C" : "U", true, false);
                 case "deleted":
                 case "missing":
-                    return CreateEntry(absolutePath, relativePath, item, "D", true);
+                    return CreateEntry(absolutePath, relativePath, item, "D", true, false);
                 case "unversioned":
-                    return CreateEntry(absolutePath, relativePath, item, "A", false);
+                    return CreateEntry(absolutePath, relativePath, item, "A", false, false);
                 default:
                     return null;
             }
         }
 
-        private static SVNStatusEntry CreateEntry(string absolutePath, string relativePath, string status, string displayStatus, bool isVersioned)
+        private static SVNStatusEntry CreateEntry(string absolutePath, string relativePath, string status, string displayStatus, bool isVersioned, bool hasTreeConflict)
         {
             return new SVNStatusEntry
             {
@@ -381,6 +387,7 @@ namespace UnitySVNTools.Editor
                 RelativePath = relativePath,
                 WorkingCopyStatus = status,
                 DisplayStatus = displayStatus,
+                HasTreeConflict = hasTreeConflict,
                 IsVersioned = isVersioned,
             };
         }

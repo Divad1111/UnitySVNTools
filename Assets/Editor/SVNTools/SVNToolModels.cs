@@ -36,6 +36,7 @@ namespace UnitySVNTools.Editor
         public string RelativePath = string.Empty;
         public string WorkingCopyStatus = string.Empty;
         public string DisplayStatus = string.Empty;
+        public bool HasTreeConflict;
         public bool IsVersioned;
     }
 

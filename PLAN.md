@@ -90,6 +90,10 @@ svn: E135000: Inconsistent line ending style
 
 1. CHANGES列表需要支持方向键移动当前选中的
 
+## 问题13
+
+1. CHANGES列表中为什么没有显示文件的冲突状态呢
+
 
 
 

@@ -1170,6 +1170,11 @@ namespace UnitySVNTools.Editor
 
         private static string GetItemDescription(SVNStatusEntry entry)
         {
+            if (entry != null && entry.HasTreeConflict)
+            {
+                return "Tree Conflicted";
+            }
+
             switch (entry.WorkingCopyStatus)
             {
                 case "added":
@@ -1977,6 +1982,8 @@ namespace UnitySVNTools.Editor
             {
                 case "A":
                     return new Color(0.26f, 0.66f, 0.33f);
+                case "C":
+                    return new Color(0.89f, 0.56f, 0.16f);
                 case "D":
                     return new Color(0.8f, 0.28f, 0.25f);
                 default:
