@@ -556,18 +556,48 @@ namespace UnitySVNTools.Editor
                 return false;
             }
 
-            var joinedPaths = string.Join("*", absolutePaths);
-            var startInfo = new ProcessStartInfo
+            string tempPathFilePath = null;
+            try
             {
-                FileName = tortoiseProcPath,
-                Arguments = $"/command:{command} /path:{Quote(joinedPaths)} /closeonend:0",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+                var pathArgument = BuildTortoiseProcPathArgument(absolutePaths, out tempPathFilePath);
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = tortoiseProcPath,
+                    Arguments = $"/command:{command} {pathArgument} /closeonend:0",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
 
-            Process.Start(startInfo);
-            output = $"Opened {command} in TortoiseSVN.";
-            return true;
+                Process.Start(startInfo);
+                tempPathFilePath = null;
+                output = $"Opened {command} in TortoiseSVN.";
+                return true;
+            }
+            catch (Exception exception)
+            {
+                output = exception.Message;
+                return false;
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(tempPathFilePath) && File.Exists(tempPathFilePath))
+                {
+                    File.Delete(tempPathFilePath);
+                }
+            }
+        }
+
+        private static string BuildTortoiseProcPathArgument(IList<string> absolutePaths, out string tempPathFilePath)
+        {
+            tempPathFilePath = null;
+            if (absolutePaths.Count == 1)
+            {
+                return $"/path:{Quote(absolutePaths[0])}";
+            }
+
+            tempPathFilePath = Path.Combine(Path.GetTempPath(), $"unity-svn-paths-{Guid.NewGuid():N}.txt");
+            File.WriteAllLines(tempPathFilePath, absolutePaths, Encoding.Unicode);
+            return $"/pathfile:{Quote(tempPathFilePath)} /deletepathfile";
         }
 
         private static SVNCommitResult CreateCommitFailureResult(string output, SVNCommitFailureKind failureKind)
